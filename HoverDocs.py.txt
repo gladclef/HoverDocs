@@ -1,0 +1,14 @@
+			return line
+
+		line = get_line()
+		pos = line.a+col-1
+		reg = sublime.Region(pos, pos)
+
+		view.show_at_center(reg)
+		view.sel().clear()
+		view.sel().add(reg)
+
+	def on_navigate(self, view, point, sym_loc, is_hover):
+		# print(f"on_navigate, point: {point}, sym_loc: {sym_loc}, is_hover: {is_hover}")
+		flags = 1+16+32 # encoded position, semi-transient, add to selection
+		v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)

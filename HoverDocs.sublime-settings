@@ -1,0 +1,31 @@
+{
+	// Show the docs when double clicking on a symbol.
+	"show_on_double_click": true,
+	// Hide the docs when the cursor changes.
+	// If false, then the docs will be created with a "close" button.
+	"double_click_auto_hide": true,
+
+	// Show the docs on mouse hover.
+	"show_on_hover": false,
+	// Hide the docs when the hover target changes.
+	// If false, then the docs will stay visible until the next time a new hover doc is created.
+	"hover_auto_hide": true,
+
+	// Display the symbol declaration.
+	"display_docstring": true,
+	// Display the symbol interface.
+	"display_interface": true,
+	// Display a hyperlink to the file and location of the symbol.
+	"display_file_hyperlink": true,
+	// Options are
+	// annotation: displayed to the right side of the text
+	// phantom: displayed below and inline with the text
+	// popup: displayed below and above the text
+	"display_style": "annotation",
+
+	// When clicking on the file hyperlink, open it in a new tab instead of a transient side file.
+	// Windows only: holding "ctrl" while clicking on the hyperlink will always open a transient file.
+	"open_hyperlink_as_tab": true,
+	// When open_hyperlink_as_tab is True, always open a new tab instead of opening the already existing tab.
+	"open_hyperlink_as_new_tab": false,
+}
