@@ -23,10 +23,4 @@
 	// annotation: displayed to the right side of the text
 	// popup: displayed below and above the text
 	"display_style": "popup",
-
-	// When clicking on the file hyperlink, open it in a new tab instead of a transient side file.
-	// Windows only: holding "ctrl" while clicking on the hyperlink will always open a transient file.
-	"open_hyperlink_as_tab": true,
-	// When open_hyperlink_as_tab is True, always open a new tab instead of opening the already existing tab.
-	"open_hyperlink_as_new_tab": false,
 }
