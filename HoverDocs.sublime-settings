@@ -12,6 +12,12 @@
 	// If false, then the docs will be created with a "close" button, and
 	// will stay visible until the next time a new hover doc is created.
 	"hover_auto_hide": true,
+	
+	// annotation: displayed to the right side of the text
+	// popup: displayed below and above the text
+	"display_style": "popup",
+	// Windows only: change the display style by holding down the ctrl key
+	"toggle_display_style": true,
 
 	// Display the symbol declaration.
 	"display_docstring": true,
@@ -19,8 +25,4 @@
 	"display_interface": true,
 	// Display a hyperlink to the file and location of the symbol.
 	"display_file_hyperlink": true,
-	// Options are
-	// annotation: displayed to the right side of the text
-	// popup: displayed below and above the text
-	"display_style": "popup",
 }

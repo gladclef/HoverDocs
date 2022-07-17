@@ -1,3 +1,3 @@
 [
-  { "keys": ["ctrl+shift+d"], "command": "hover_docs" }
+  { "keys": ["ctrl+shift+d"], "command": "hover_docs", "args": { "display_style": "popup" } }
 ]

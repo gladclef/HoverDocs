@@ -5,7 +5,7 @@ import html
 import re
 
 class HoverDocsCommand(sublime_plugin.TextCommand):
-	def run(self, edit, mode="open", args=None):
+	def run(self, edit, mode="open", display_style=""):
 		if mode == "append":
 			self.view.insert(edit, self.view.size(), args['characters'])
 
@@ -109,7 +109,9 @@ class HoverDocsListener(sublime_plugin.EventListener):
 						doc_strs.append(doc_str)
 						sym_locs.append(sym_loc)
 				if len(doc_regs) > 0:
-					self.add_docs(view, doc_regs, doc_strs, sym_locs, is_hover=False)
+					print(args)
+					fds = "" if (not "display_style" in args) else args["display_style"]
+					self.add_docs(view, doc_regs, doc_strs, sym_locs, is_hover=False, is_keybinding=True, force_display_style=fds)
 		if command_name == "drag_select":
 			for sel in view.sel():
 				if sel not in self.sel_snapshot:
@@ -121,9 +123,10 @@ class HoverDocsListener(sublime_plugin.EventListener):
 
 	def on_double_click(self, view, reg):
 		view.hide_popup()
-		doc_str, sym_loc, sym_reg = self.prep_doc(view, reg.a)
-		if doc_str != None:
-			self.add_docs(view, [sym_reg], [doc_str], [sym_loc], is_hover=False)
+		if self.setting("show_on_double_click"):
+			doc_str, sym_loc, sym_reg = self.prep_doc(view, reg.a)
+			if doc_str != None:
+				self.add_docs(view, [sym_reg], [doc_str], [sym_loc], is_hover=False)
 
 	def on_hover(self, view, point, hover_zone):
 		if not self.setting("show_on_hover"):
@@ -189,7 +192,8 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		v2, def_reg, comment_reg = self.find_def_and_comment(sym_loc, sym_name)
 		def_scopes, comment_scopes = self.get_scope_spans(v2, def_reg), self.get_scope_spans(v2, comment_reg)
 		def_str, comment_str = v2.substr(def_reg), v2.substr(comment_reg)
-		def_str, comment_str = self.apply_syntax(v2, def_str, def_scopes), self.apply_syntax(v2, comment_str, comment_scopes)
+		def_str = self.apply_syntax(v2, def_str, def_scopes)
+		comment_str = self.apply_syntax(v2, comment_str, comment_scopes)
 		
 		# build the doc_str
 		doc_str = ""
@@ -204,16 +208,26 @@ class HoverDocsListener(sublime_plugin.EventListener):
 
 		return doc_str, sym_loc, sym_reg
 
-	def add_docs(self, view, doc_regs, doc_strs, sym_locs, is_hover):
+	def add_docs(self, view, doc_regs, doc_strs, sym_locs, is_hover, is_keybinding=False, force_display_style=""):
 		for i in range(len(doc_strs)):
 			doc_strs[i] = doc_strs[i].replace("!href!", str(i))
+
+		# add close buttons
 		close_button = " <a href='close'>close</a>"
 		if is_hover and not self.setting("hover_auto_hide"):
 			doc_strs = list(map(lambda s: s+close_button, doc_strs))
 		if not is_hover and not self.setting("double_click_auto_hide"):
 			doc_strs = list(map(lambda s: s+close_button, doc_strs))
 
-		if self.setting("display_style") == "annotation":
+		# determine the display style
+		is_ctrl = self.is_ctrl_pressed() and self.setting("toggle_display_style") and not is_keybinding
+		display_style = "annotation" if (self.setting("display_style") == "annotation") else "popup"
+		if is_ctrl:
+			display_style = "annotation" if (display_style == "popup") else "popup"
+		if force_display_style != "":
+			display_style = force_display_style
+
+		if display_style == "annotation":
 			flags = 128 # RegionFlags.HIDDEN
 			view.add_regions(key="hd_hover", regions=doc_regs, scope='', icon='', flags=flags, annotations=doc_strs,
 				             annotation_color='', on_navigate=lambda href: self.on_navigate(href, view, sym_locs))
@@ -464,7 +478,6 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		if href == "close":
 			if self.setting("display_style") == "annotation":
 				view.erase_regions("hd_hover")
-			else: # "popup"
 				view.hide_popup()
 		else: # "open"
 			sym_loc = sym_locs[int(href)]
