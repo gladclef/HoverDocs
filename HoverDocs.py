@@ -15,6 +15,8 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		self.hover_line = -1
 		self.dclick_annotations = []
 		self.pinned_annotations = []
+		self.sel_snapshot = []
+		self.double_click_target = None
 
 	def setting(self, setting):
 		return sublime.load_settings("HoverDocs.sublime-settings")[setting]
@@ -99,29 +101,46 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		if command_name == "hover_docs":
 			if (args == None) or (not "mode" in args) or (args["mode"] == "open"):
 				regs = filter(lambda r: r.size() == 0, view.sel())
-				docregs, docstrs, sym_locs = [], [], []
+				doc_regs, doc_strs, sym_locs = [], [], []
 				for reg in regs:
-					docstr, sym_loc = self.prep_doc(view, reg.a)
-					if docstr != None:
-						docregs.append(sublime.Region(reg.a, reg.a))
-						docstrs.append(docstr)
+					doc_str, sym_loc, sym_reg = self.prep_doc(view, reg.a)
+					if doc_str != None:
+						doc_regs.append(sym_reg)
+						doc_strs.append(doc_str)
 						sym_locs.append(sym_loc)
-				if len(docregs) > 0:
-					self.add_docs(view, docregs, docstrs, sym_locs)
+				if len(doc_regs) > 0:
+					self.add_docs(view, doc_regs, doc_strs, sym_locs, is_hover=False)
+		if command_name == "drag_select":
+			for sel in view.sel():
+				if sel not in self.sel_snapshot:
+					self.double_click_target = sel
+					break
+			if "by" in args and args["by"] == "words":
+				self.on_double_click(view, self.double_click_target)
+			self.sel_snapshot = list(view.sel())
+
+	def on_double_click(self, view, reg):
+		view.hide_popup()
+		doc_str, sym_loc, sym_reg = self.prep_doc(view, reg.a)
+		if doc_str != None:
+			self.add_docs(view, [sym_reg], [doc_str], [sym_loc], is_hover=False)
 
 	def on_hover(self, view, point, hover_zone):
-		docstr, sym_loc = self.prep_doc(view, point)
+		if not self.setting("show_on_hover"):
+			return
+
+		doc_str, sym_loc, sym_reg = self.prep_doc(view, point)
 		hover_line = view.rowcol(point)[0]
 
-		if docstr == None:
+		if doc_str == None:
 			if hover_line != self.hover_line:
 				if self.setting("hover_auto_hide"):
 					view.erase_regions("hd_hover")
 		else:
-			self.add_docs(view, [sublime.Region(point, point)], [docstr], [sym_loc])
+			self.add_docs(view, [sym_reg], [doc_str], [sym_loc], is_hover=True)
 		self.hover_line = hover_line
 
-	def prep_doc(self, view, point, force_docstring=None, force_interface=None, force_hyperlink=None):
+	def prep_doc(self, view, point, force_doc_string=None, force_interface=None, force_hyperlink=None):
 		""" Finds the definition for the reference symbol at the given point (if any)
 		and builds out the documentation string.
 
@@ -130,8 +149,9 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		    point: the location in the view to grab the symbol from
 		    force*: True or False to force the documentation string, None to obey the settings file
 		Returns:
-		    docstr: The documentation string, or None if not applicable
+		    doc_str: The documentation string, or None if not applicable
 		    sym_loc: The SymbolLocation, or None if not applicable
+		    sym_reg: The symbol region in the given view.
 		"""
 		point_reg = sublime.Region(point, point)
 		scope = view.extract_tokens_with_scopes(point_reg)
@@ -141,28 +161,28 @@ class HoverDocsListener(sublime_plugin.EventListener):
 
 		# some basic qualifications
 		if point >= view.size():
-			return None, None
+			return None, None, None
 		if len(scope) == 0:
-			return None, None
-		scope_reg = scope[0][0]
+			return None, None, None
+		sym_reg = scope[0][0]
 		scope_names = scope[0][1]
 		if "comment" in scope_names:
-			return None, None
+			return None, None, None
 
 		# check if this symbol _is_ the definition
-		sym_regs = view.symbol_regions()
+		view_sym_regs = view.symbol_regions()
 		found = False
-		for sym_reg in sym_regs:
-			if sym_reg.region.contains(point):
-				if sym_reg.type == 1: # 1 == Definition
-					return None, None
+		for view_sym_reg in view_sym_regs:
+			if view_sym_reg.region.contains(point):
+				if view_sym_reg.type == 1: # 1 == Definition
+					return None, None, None
 
-		# symbol at scope_reg must be a reference, try to find the definition
+		# symbol at sym_reg must be a reference, try to find the definition
 		# try to find a definition with the same name in the index
-		sym_name = view.substr(scope_reg)
+		sym_name = view.substr(sym_reg)
 		sym_loc = self.find_symbol_definition(view, sym_name)
 		if sym_loc == None:
-			return None, None
+			return None, None, None
 		fn = os.path.basename(sym_loc.path)
 
 		# get the def_str and comment_str, with syntax applied via minihtml
@@ -171,18 +191,41 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		def_str, comment_str = v2.substr(def_reg), v2.substr(comment_reg)
 		def_str, comment_str = self.apply_syntax(v2, def_str, def_scopes), self.apply_syntax(v2, comment_str, comment_scopes)
 		
-		# build the docstr
-		docstr = ""
-		if (self.setting("display_docstring") or force_docstring == True) and (force_docstring != False):
+		# build the doc_str
+		doc_str = ""
+		if (self.setting("display_docstring") or force_doc_string == True) and (force_doc_string != False):
 			if len(def_str) > 0:
-				docstr += def_str
+				doc_str += def_str
 		if (self.setting("display_interface") or force_interface == True) and (force_interface != False):
 			if len(comment_str) > 0:
-				docstr += ("" if len(docstr) == 0 else "<br>") + comment_str
+				doc_str += ("" if len(doc_str) == 0 else "<br>") + comment_str
 		if (self.setting("display_file_hyperlink") or force_hyperlink == True) and (force_hyperlink != False):
-			docstr += ("" if len(docstr) == 0 else "<br>") + f"<a href='!href!'>{fn}:{sym_loc.row+1}</a>"
+			doc_str += ("" if len(doc_str) == 0 else "<br>") + f"<a href='!href!'>{fn}:{sym_loc.row+1}</a>"
 
-		return docstr, sym_loc
+		return doc_str, sym_loc, sym_reg
+
+	def add_docs(self, view, doc_regs, doc_strs, sym_locs, is_hover):
+		for i in range(len(doc_strs)):
+			doc_strs[i] = doc_strs[i].replace("!href!", str(i))
+		close_button = " <a href='close'>close</a>"
+		if is_hover and not self.setting("hover_auto_hide"):
+			doc_strs = list(map(lambda s: s+close_button, doc_strs))
+		if not is_hover and not self.setting("double_click_auto_hide"):
+			doc_strs = list(map(lambda s: s+close_button, doc_strs))
+
+		if self.setting("display_style") == "annotation":
+			flags = 128 # RegionFlags.HIDDEN
+			view.add_regions(key="hd_hover", regions=doc_regs, scope='', icon='', flags=flags, annotations=doc_strs,
+				             annotation_color='', on_navigate=lambda href: self.on_navigate(href, view, sym_locs))
+		else: # "popup"
+			flags = 2+16 # COOPERATE_WITH_AUTO_COMPLETE, KEEP_ON_SELECTION_MODIFIED
+			if is_hover and self.setting("hover_auto_hide"):
+				flags += 8 # HIDE_ON_MOUSE_MOVE_AWAY
+			if not is_hover and self.setting("double_click_auto_hide"):
+				flags += 8 # HIDE_ON_MOUSE_MOVE_AWAY
+			view_width, view_height = view.viewport_extent()
+			view.show_popup(doc_strs[0], flags, doc_regs[0].a, max_width=view_width, max_height=view_height,
+			                on_navigate=lambda href: self.on_navigate(href, view, sym_locs))
 
 	def apply_syntax(self, view, strval, scope_spans):
 		""" Inserts minihtml into the given string to match the syntax of the given spans.
@@ -231,13 +274,6 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			ret += f"{style_str}'>{strpart}</div>"
 
 		return ret
-
-	def add_docs(self, view, docregs, docstrs, sym_locs):
-		flags = 128 # RegionFlags.HIDDEN
-		for i in range(len(docstrs)):
-			docstrs[i] = docstrs[i].replace("!href!", str(i))
-		view.add_regions(key="hd_hover", regions=docregs, scope='', icon='', flags=flags, annotations=docstrs,
-			             annotation_color='', on_navigate=lambda href: self.on_navigate(sym_loc=sym_locs[int(href)], is_hover=True))
 
 	def find_def_and_comment(self, sym_loc, sym_name):
 		""" For a given symbol, get the definition string and the comment string.
@@ -424,10 +460,17 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			pass
 		return False
 
-	def on_navigate(self, sym_loc, is_hover):
-		is_same_file = sublime.active_window().active_view().file_name() == sym_loc.path
-		if is_same_file and not self.is_ctrl_pressed():
-			self.move_to(sublime.active_window().active_view(), sym_loc.row, sym_loc.col)
-		else:
-			flags = 1+16+32 # encoded position, semi-transient, add to selection
-			v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
+	def on_navigate(self, href, view, sym_locs):
+		if href == "close":
+			if self.setting("display_style") == "annotation":
+				view.erase_regions("hd_hover")
+			else: # "popup"
+				view.hide_popup()
+		else: # "open"
+			sym_loc = sym_locs[int(href)]
+			is_same_file = sublime.active_window().active_view().file_name() == sym_loc.path
+			if is_same_file and not self.is_ctrl_pressed():
+				self.move_to(sublime.active_window().active_view(), sym_loc.row, sym_loc.col)
+			else:
+				flags = 1+16+32 # encoded position, semi-transient, add to selection
+				v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
