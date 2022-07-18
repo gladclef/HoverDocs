@@ -10,6 +10,11 @@ In-line documentation display in Sublime Text.
 # Demo
 ![Demo Gif](https://github.com/gladclef/HoverDocs/blob/master/demo.gif)
 
+# Key Bindings
+There's some example key bindings available. Go to
+Preferences > Package Settings > HoverDocs > Key Bindings
+to set them.
+
 ## Installation
 You can install the package with Package Control or manually.
 
