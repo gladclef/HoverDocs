@@ -99,7 +99,9 @@ class HoverDocsListener(sublime_plugin.EventListener):
 
 	def on_text_command(self, view, command_name, args):
 		if command_name == "hover_docs":
-			if (args == None) or (not "mode" in args) or (args["mode"] == "open"):
+			if (args == None) or (not "mode" in args):
+				args["mode"] = "open"
+			if  args["mode"] == "open":
 				regs = filter(lambda r: r.size() == 0, view.sel())
 				doc_regs, doc_strs, sym_locs = [], [], []
 				for reg in regs:
@@ -109,9 +111,11 @@ class HoverDocsListener(sublime_plugin.EventListener):
 						doc_strs.append(doc_str)
 						sym_locs.append(sym_loc)
 				if len(doc_regs) > 0:
-					print(args)
 					fds = "" if (not "display_style" in args) else args["display_style"]
 					self.add_docs(view, doc_regs, doc_strs, sym_locs, is_hover=False, is_keybinding=True, force_display_style=fds)
+			elif args["mode"] == "clear":
+				view.hide_popup()
+				view.erase_regions("hd_hover")
 		if command_name == "drag_select":
 			for sel in view.sel():
 				if sel not in self.sel_snapshot:
@@ -143,7 +147,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			self.add_docs(view, [sym_reg], [doc_str], [sym_loc], is_hover=True)
 		self.hover_line = hover_line
 
-	def prep_doc(self, view, point, force_doc_string=None, force_interface=None, force_hyperlink=None):
+	def prep_doc(self, view, point, force_doc_string=None, force_interface=None, force_hyperlink=None, _look_behind=False):
 		""" Finds the definition for the reference symbol at the given point (if any)
 		and builds out the documentation string.
 
@@ -151,11 +155,16 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		    view: the view to grab the symbol from
 		    point: the location in the view to grab the symbol from
 		    force*: True or False to force the documentation string, None to obey the settings file
+		    _look_behind: Private. Look for a symbol at point-1, in case we're at the end of a word.
 		Returns:
 		    doc_str: The documentation string, or None if not applicable
 		    sym_loc: The SymbolLocation, or None if not applicable
 		    sym_reg: The symbol region in the given view.
 		"""
+		if _look_behind:
+			point -= 1
+		if point < 0 or point > view.size():
+			return None, None, None
 		point_reg = sublime.Region(point, point)
 		scope = view.extract_tokens_with_scopes(point_reg)
 		regs = []
@@ -163,10 +172,11 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		sym_loc = None
 
 		# some basic qualifications
-		if point >= view.size():
-			return None, None, None
 		if len(scope) == 0:
-			return None, None, None
+			if not _look_behind:
+				return self.prep_doc(view, point, force_doc_string, force_interface, force_hyperlink, _look_behind=True)
+			else:
+				return None, None, None
 		sym_reg = scope[0][0]
 		scope_names = scope[0][1]
 		if "comment" in scope_names:
@@ -322,13 +332,14 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			v2 = sublime.active_window().create_output_panel("hd_output_panel", True)
 			start = max(0, sym_loc.row - 10)
 			stop = sym_loc.row + 10
-			pre_line, post_line, sym_reg = 0, 0, None
+			pre_line, sym_line, post_line, sym_reg = 0, 0, None
 			with open(sym_loc.path, 'r') as f:
 				lineno = 0
 				for line in f:
 					lineno += 1
 					if lineno >= start:
 						if lineno == sym_loc.row:
+							sym_line = v2.size()
 							sym_reg = sublime.Region(v2.size()+sym_loc.col-1, v2.size()+sym_loc.col+len(sym_name)-1)
 						elif lineno < sym_loc.row:
 							pre_line = v2.size()
@@ -339,6 +350,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 						break
 				stop = lineno
 			pre_line = v2.line(pre_line)
+			sym_line = v2.line(sym_line)
 			post_line = v2.line(post_line)
 
 			# set the syntax and let sublime parse the hidden output panel
@@ -346,7 +358,8 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		else:
 			pos = self.get_pos(v2, sym_loc.row, sym_loc.col)
 			sym_reg = sublime.Region(pos, pos+len(sym_name))
-			pre_line = v2.line(pos-1)
+			pre_line = v2.line(v2.line(pos).a-1)
+			sym_line = v2.line(pos)
 			post_line = v2.line(v2.line(pos).b+1)
 
 		# get the defstr from the symbol line
@@ -358,21 +371,32 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		sym_extracted_reg = sublime.Region(sym_reg.a, max(sym_reg.b, tmp_reg.b))
 		def_reg = sym_extracted_reg
 
-		# get the comment line(s), either above or below the symbol line
-		comment_reg = sublime.Region(0,0)
-		pre_line_str = v2.substr(pre_line).rstrip()
-		post_line_str = v2.substr(post_line).rstrip()
-		pnts = [pre_line.a+len(pre_line_str), post_line.a+len(post_line_str)]
-		for pnt in pnts:
-			comment_scope = v2.scope_name(pnt)
-			if "comment" in comment_scope:
-				comment_reg = v2.extract_scope(pnt)
-				if comment_reg != None:
-					# v2.sel().clear()
-					# v2.sel().add(comment_reg)
-					# v2.run_command("toggle_comment")
-					# comment_reg = v2.sel()[0]
-					break
+		# get the comment line(s), either on or above or below the symbol line
+		comment_reg = None
+		for line in [sym_line, pre_line, post_line]:
+			scope_spans = self.get_scope_spans(v2, line)
+			for ss in scope_spans:
+				# is this scope span part of a comment
+				found = False
+				for scope_name in ss[2]:
+					if "comment" in scope_name:
+						found = True
+						break
+				if not found:
+					continue
+
+				# expand the scope span
+				for pnt in [line.a+ss[0], line.a+ss[0]+ss[1]-1]:
+					reg = v2.extract_scope(pnt)
+					if reg != None:
+						if comment_reg == None:
+							comment_reg = reg
+						else:
+							comment_reg = sublime.Region(min(comment_reg.a, reg.a), max(comment_reg.b, reg.b))
+			if comment_reg != None:
+				break
+		if comment_reg == None:
+			comment_reg = sublime.Region(0,0)
 		
 		return v2, def_reg, comment_reg
 
@@ -457,11 +481,12 @@ class HoverDocsListener(sublime_plugin.EventListener):
 
 	def move_to(self, view, row, col):
 		pos = self.get_pos(view, row, col)
-		reg = sublime.Region(pos, pos)
+		print(pos)
+		print(view.file_name())
 
-		view.show_at_center(reg)
 		view.sel().clear()
-		view.sel().add(reg)
+		view.sel().add(pos)
+		view.show_at_center(pos)
 
 	def is_ctrl_pressed(self):
 		# from uiautomation
@@ -481,9 +506,9 @@ class HoverDocsListener(sublime_plugin.EventListener):
 				view.hide_popup()
 		else: # "open"
 			sym_loc = sym_locs[int(href)]
-			is_same_file = sublime.active_window().active_view().file_name() == sym_loc.path
+			is_same_file = view.file_name() == sym_loc.path
 			if is_same_file and not self.is_ctrl_pressed():
-				self.move_to(sublime.active_window().active_view(), sym_loc.row, sym_loc.col)
+				self.move_to(view, sym_loc.row, sym_loc.col)
 			else:
 				flags = 1+16+32 # encoded position, semi-transient, add to selection
 				v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
