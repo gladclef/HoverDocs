@@ -5,6 +5,10 @@ import html
 import re
 
 class HoverDocsCommand(sublime_plugin.TextCommand):
+	""" Mostly here so that I can trick sublime into thinking there's a
+	hover_docs command, which then gets interpretted by the
+	HoverDocsListener.on_text_command(...).
+	"""
 	def run(self, edit, mode="open", display_style=""):
 		if mode == "append":
 			self.view.insert(edit, self.view.size(), args['characters'])
@@ -367,7 +371,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			sym_reg = sublime.Region(pos, pos+len(sym_name))
 			pre_line = v2.line(v2.line(pos).a-1)
 			sym_line = v2.line(pos)
-			post_line = v2.line(v2.line(pos).b+1)
+			post_line = v2.line(v2.full_line(pos).b+1)
 
 		# get the defstr from the symbol line
 		# expand to the end of the function parameters
