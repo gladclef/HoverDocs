@@ -102,9 +102,8 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			if (args == None) or (not "mode" in args):
 				args["mode"] = "open"
 			if  args["mode"] == "open":
-				regs = filter(lambda r: r.size() == 0, view.sel())
 				doc_regs, doc_strs, sym_locs = [], [], []
-				for reg in regs:
+				for reg in view.sel():
 					doc_str, sym_loc, sym_reg = self.prep_doc(view, reg.a)
 					if doc_str != None:
 						doc_regs.append(sym_reg)
