@@ -12,7 +12,12 @@
 	// If false, then the docs will be created with a "close" button, and
 	// will stay visible until the next time a new hover doc is created.
 	"hover_auto_hide": true,
-	
+
+	// Hide the docs when the cursor changes.
+	// If false, then the docs will be created with a "close" button, and
+	// will stay visible until closed.
+	"keybinding_auto_hide": false,
+
 	// annotation: displayed to the right side of the text
 	// popup: displayed below and above the text
 	"display_style": "popup",
@@ -25,4 +30,6 @@
 	"display_interface": true,
 	// Display a hyperlink to the file and location of the symbol.
 	"display_file_hyperlink": true,
+	// Open files as transients instead of switching views.
+	"open_hyperlink_as_transient": false,
 }
