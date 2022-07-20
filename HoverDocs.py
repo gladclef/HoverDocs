@@ -9,9 +9,9 @@ class HoverDocsCommand(sublime_plugin.TextCommand):
 	hover_docs command, which then gets interpretted by the
 	HoverDocsListener.on_text_command(...).
 	"""
-	def run(self, edit, mode="open", display_style=""):
+	def run(self, edit, mode="open", display_style="", characters=""):
 		if mode == "append":
-			self.view.insert(edit, self.view.size(), args['characters'])
+			self.view.insert(edit, self.view.size(), characters)
 
 class HoverDocsListener(sublime_plugin.EventListener):
 	def __init__(self, *vargs, **kwargs):
@@ -343,7 +343,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			v2 = sublime.active_window().create_output_panel("hd_output_panel", True)
 			start = max(0, sym_loc.row - 10)
 			stop = sym_loc.row + 10
-			pre_line, sym_line, post_line, sym_reg = 0, 0, None
+			pre_line, sym_line, post_line, sym_reg = 0, 0, 0, None
 			with open(sym_loc.path, 'r') as f:
 				lineno = 0
 				for line in f:
@@ -354,7 +354,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 							sym_reg = sublime.Region(v2.size()+sym_loc.col-1, v2.size()+sym_loc.col+len(sym_name)-1)
 						elif lineno < sym_loc.row:
 							pre_line = v2.size()
-						v2.run_command("hover_docs", args={ "mode": "append", "args": { "characters": line } })
+						v2.run_command("hover_docs", args={ "mode": "append", "characters": line })
 						if lineno == sym_loc.row:
 							post_line = v2.size()
 					if lineno >= stop:
@@ -516,26 +516,27 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		index = int(parts[1])
 		sym_loc = sym_locs[index]
 
-		# find the view
+		# find the view with the given symbol
 		v2 = None
 		for win in sublime.windows():
 			v2 = win.find_open_file(sym_loc.path)
 			if v2 != None:
 				break
-		if v2 == None:
-			sublime.active_window().status_message(f"Can't find view for file {sym_loc.path}")
-			return
 
 		if action == "close":
-			v2.erase_regions("hd_hover")
-			v2.hide_popup()
+			view.erase_regions("hd_hover")
+			view.hide_popup()
 		else: # "goto"
 			open_as_transient = self.setting("open_hyperlink_as_transient")
 			if self.is_ctrl_pressed():
 				open_as_transient = not open_as_transient
 
 			if not open_as_transient:
-				self.move_to(v2, sym_loc.row, sym_loc.col)
+				if v2 != None:
+					self.move_to(v2, sym_loc.row, sym_loc.col)
+				else:
+					flags = 1 # encoded position
+					v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
 			else:
 				flags = 1+16+32 # encoded position, semi-transient, add to selection
 				v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
