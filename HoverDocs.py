@@ -3,15 +3,20 @@ import sublime_plugin
 import os
 import html
 import re
+import copy
 
 class HoverDocsCommand(sublime_plugin.TextCommand):
 	""" Mostly here so that I can trick sublime into thinking there's a
 	hover_docs command, which then gets interpretted by the
 	HoverDocsListener.on_text_command(...).
 	"""
-	def run(self, edit, mode="open", display_style="", characters=""):
+	def run(self, edit, mode="open", display_style="", characters="", reg_str=""):
 		if mode == "append":
 			self.view.insert(edit, self.view.size(), characters)
+		if mode == "replace":
+			reg_parts = reg_str.split(":")
+			reg = sublime.Region(int(reg_parts[0]), int(reg_parts[1]))
+			self.view.replace(edit, reg, characters)
 
 class HoverDocsListener(sublime_plugin.EventListener):
 	def __init__(self, *vargs, **kwargs):
@@ -108,7 +113,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			if  args["mode"] == "open":
 				doc_regs, doc_strs, sym_locs = [], [], []
 				for reg in view.sel():
-					doc_str, sym_loc, sym_reg = self.prep_doc(view, reg.a)
+					doc_str, sym_loc, sym_reg = self.build_doc_parts(view, reg.a)
 					if doc_str != None:
 						doc_regs.append(sym_reg)
 						doc_strs.append(doc_str)
@@ -133,7 +138,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 	def on_double_click(self, view, reg):
 		view.hide_popup()
 		if self.setting("show_on_double_click"):
-			doc_str, sym_loc, sym_reg = self.prep_doc(view, reg.a)
+			doc_str, sym_loc, sym_reg = self.build_doc_parts(view, reg.a)
 			if doc_str != None:
 				self.add_docs(view, [sym_reg], [doc_str], [sym_loc], is_double_click=True)
 
@@ -141,7 +146,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		if not self.setting("show_on_hover"):
 			return
 
-		doc_str, sym_loc, sym_reg = self.prep_doc(view, point)
+		doc_str, sym_loc, sym_reg = self.build_doc_parts(view, point)
 		hover_line = view.rowcol(point)[0]
 
 		if doc_str == None:
@@ -152,7 +157,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			self.add_docs(view, [sym_reg], [doc_str], [sym_loc], is_hover=True)
 		self.hover_line = hover_line
 
-	def prep_doc(self, view, point, force_doc_string=None, force_interface=None, force_hyperlink=None, _look_behind=False):
+	def build_doc_parts(self, view, point, force_doc_string=None, force_interface=None, force_hyperlink=None, _look_behind=False):
 		""" Finds the definition for the reference symbol at the given point (if any)
 		and builds out the documentation string.
 
@@ -179,7 +184,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		# some basic qualifications
 		if len(scope) == 0:
 			if not _look_behind:
-				return self.prep_doc(view, point, force_doc_string, force_interface, force_hyperlink, _look_behind=True)
+				return self.build_doc_parts(view, point, force_doc_string, force_interface, force_hyperlink, _look_behind=True)
 			else:
 				return None, None, None
 		sym_reg = scope[0][0]
@@ -201,7 +206,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		sym_loc = self.find_symbol_definition(view, sym_name)
 		if sym_loc == None:
 			if not _look_behind:
-				return self.prep_doc(view, point, force_doc_string, force_interface, force_hyperlink, _look_behind=True)
+				return self.build_doc_parts(view, point, force_doc_string, force_interface, force_hyperlink, _look_behind=True)
 			else:
 				return None, None, None
 		fn = os.path.basename(sym_loc.path)
@@ -213,6 +218,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		def_scopes, comment_scopes = self.get_scope_spans(v2, def_reg), self.get_scope_spans(v2, comment_reg)
 		def_str, comment_str = v2.substr(def_reg), v2.substr(comment_reg)
 		def_str = self.apply_syntax(v2, def_str, def_scopes)
+		comment_str, comment_scopes = self.reduce_comment_str(v2, comment_str, comment_scopes)
 		comment_str = self.apply_syntax(v2, comment_str, comment_scopes)
 		
 		# build the doc_str
@@ -262,6 +268,166 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			view_width, view_height = view.viewport_extent()
 			view.show_popup(doc_strs[0], flags, doc_regs[0].a, max_width=view_width, max_height=view_height,
 			                on_navigate=lambda href: self.on_navigate(href, view, sym_locs))
+
+	def reduce_comment_str(self, view, comment_str, comment_scopes):
+		""" Removes the comment markings from the given comment string and trims the common leading
+		whitespace off of the comment.
+
+		Args:
+		    view: the view that the comment_str was extracted from
+		    comment_str: the comment to modify
+		    comment_scopes: a list of [idx, len, scope_names] that matches the given comment_str
+		Returns:
+		    comment_str: The modified string value
+		    comment_scopes: The modified scopes, whose regions have been modified to match the
+		                    reduction in comment string lengths
+		"""
+		if len(comment_str.strip()) == 0:
+			return comment_str, comment_scopes
+
+		# prepare a system for tracking reductions
+		# each reduction has the values "newpos", "oldpos", and "length"
+		new_comment_scopes = []
+		for cs in comment_scopes:
+			end_pos = cs[0] + cs[1]
+			new_comment_scopes.append([cs[0], cs[1], cs[2], end_pos])
+		def reduce_string(strval, pos, length):
+			if length == 0:
+				return strval
+
+			# first, apply the reduction to the comment_scopes
+			to_remove = []
+			for cs in new_comment_scopes:
+				for p in [0, 3]:
+					if cs[p] >= pos:
+						if cs[p] >= pos+length:
+							cs[p] -= length
+						else:
+							cs[p] = pos
+				if cs[0] == cs[3]:
+					to_remove.append(cs)
+
+			# now reduce the string
+			if pos == 0:
+				return strval[length:]
+			elif pos+length >= len(strval):
+				return strval[:pos]
+			else:
+				return strval[:pos] + strval[pos+length:]
+
+		# helpful string functions
+		def split_line(strval, ws_loc="left"):
+			if ws_loc == "left":
+				non_whitespace = strval.lstrip()
+				whitespace = strval[:len(strval) - len(non_whitespace)]
+			else:
+				non_whitespace = strval.rstrip()
+				whitespace = strval[len(non_whitespace):]
+			return whitespace, non_whitespace
+
+		# build a new view into which to insert the comment string
+		sublime.active_window().destroy_output_panel("hd_output_panel")
+		v2 = sublime.active_window().create_output_panel("hd_output_panel", True)
+		v2.assign_syntax(view.syntax())
+		v2.set_scratch(True)
+
+		# insert the comment string
+		v2.run_command("hover_docs", args={ "mode": "append", "characters": comment_str })
+
+		# find the length of the common whitespace
+		tab_size = view.settings().get("tab_size")
+		def replace_tabs(strval):
+			whitespace, non_whitespace = split_line(strval)
+			return whitespace.replace("\t", " "*tab_size), non_whitespace
+		first_line_parts = replace_tabs(v2.substr(v2.line(0)))
+		common_whitespace = len(first_line_parts[0]+first_line_parts[1])
+		for line in v2.lines(sublime.Region(0, v2.size())):
+			line_str = v2.substr(line)
+			if len(line_str) == 0:
+				continue
+			line_parts = replace_tabs(line_str)
+			common_whitespace = min(common_whitespace, len(line_parts[0]))
+
+		# remove to the common whitespace
+		pos = 0
+		while pos < v2.size():
+			line = v2.line(pos)
+			strval = v2.substr(line)
+
+			whitespace, non_whitespace = split_line(strval)
+			linepos, cnt = 0, 0
+			while linepos < len(whitespace):
+				if whitespace[linepos] == "\t":
+					cnt += tab_size
+				else:
+					cnt += 1
+				if cnt > common_whitespace:
+					break
+				linepos += 1
+			linepos =  min(linepos, len(whitespace))
+
+			whitespace = whitespace[linepos:]
+			comment_str = reduce_string(comment_str, pos, linepos)
+			v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"{line.a}:{line.b}", "characters": whitespace+non_whitespace })
+			pos = v2.full_line(pos).b
+		v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
+
+		# specifically for python, remove the docstrings
+		is_pydocstr = False
+		if view.syntax().name.lower() == "python":
+			comment_str_rs = comment_str.rstrip()
+			comment_str_ls = comment_str_rs.lstrip()
+			if comment_str_ls.startswith('"""') and comment_str_rs.endswith('"""'):
+				is_pydocstr = True
+				first_line_parts = split_line(v2.substr(v2.line(0)))
+				comment_str = reduce_string(comment_str_rs, len(first_line_parts[0]), 3)
+				comment_str = reduce_string(comment_str, len(comment_str)-3, 3)
+				v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
+
+		# remove the comment markings from the comment string
+		if not is_pydocstr:
+			pos = 0
+			while pos < v2.size():
+				line = v2.line(pos)
+				line_str = v2.substr(line)
+
+				# replace the comment
+				v2.sel().clear()
+				v2.sel().add(pos)
+				v2.run_command("toggle_comment")
+				newline = v2.line(pos)
+				if newline.size() < line.size():
+					# track the string reduction
+					newline_str = v2.substr(newline)
+					front_cnt = max(0, line_str.index(newline_str))
+					back_cnt = max(0, line.size()-newline.size() - front_cnt)
+					comment_str = reduce_string(comment_str, line.a, front_cnt)
+					comment_str = reduce_string(comment_str, line.b-front_cnt, back_cnt)
+				else:
+					# toggled comment the wrong way
+					v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"{newline.a}:{newline.b}", "characters": line_str })
+
+				# move on to the next line
+				pos = v2.full_line(pos).b+1
+		v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
+
+		# remove empty leading and trailing lines
+		empty_leading = 0
+		for line in v2.lines(sublime.Region(0, v2.size())):
+			line_str = v2.substr(line)
+			if len(line_str.strip()) > 0:
+				empty_leading = line.a
+				break
+		if empty_leading > 0:
+			comment_str = reduce_string(comment_str, 0, empty_leading)
+		comment_str = comment_str.rstrip()
+
+		# update the "lengths" of the comment_scopes
+		for cs in new_comment_scopes:
+			cs[1] = cs[3] - cs[0]
+			del cs[3]
+
+		return comment_str, new_comment_scopes
 
 	def apply_syntax(self, view, strval, scope_spans):
 		""" Inserts minihtml into the given string to match the syntax of the given spans.
@@ -405,6 +571,12 @@ class HoverDocsListener(sublime_plugin.EventListener):
 						else:
 							comment_reg = sublime.Region(min(comment_reg.a, reg.a), max(comment_reg.b, reg.b))
 			if comment_reg != None:
+				# include the leading whitespace on the comment string
+				comment_line = v2.line(comment_reg.a)
+				pre_comment_str = v2.substr(sublime.Region(comment_line.a, comment_reg.a))
+				if len(pre_comment_str.strip()) == 0:
+					comment_reg = sublime.Region(comment_line.a, comment_reg.b)
+				# comment found, stop looking
 				break
 		if comment_reg == None:
 			comment_reg = sublime.Region(0,0)
@@ -499,6 +671,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		view.show_at_center(pos)
 
 	def is_ctrl_pressed(self):
+		""" Checks if cntl is being held down """
 		# from uiautomation
 		# https://github.com/yinkaisheng/Python-UIAutomation-for-Windows/blob/master/uiautomation/uiautomation.py
 		try:
