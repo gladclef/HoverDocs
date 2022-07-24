@@ -237,11 +237,12 @@ class HoverDocsListener(sublime_plugin.EventListener):
 	def add_docs(self, view, doc_regs, doc_strs, sym_locs, is_hover=False, is_double_click=False, is_keybinding=False, force_display_style=""):
 		# add close buttons
 		auto_hide = True
+		is_ctrl = self.is_ctrl_pressed() and self.setting("toggle_display_style") and not is_keybinding
 		if (is_hover and not self.setting("hover_auto_hide")) or \
 		   (is_double_click and not self.setting("double_click_auto_hide")) or \
 		   (is_keybinding and not self.setting("keybinding_auto_hide")):
 			auto_hide = False
-		if not auto_hide:
+		if not auto_hide or is_ctrl:
 			close_button = f" <a href='close:!href!'>close</a>"
 			doc_strs = list(map(lambda s: s+close_button, doc_strs))
 
@@ -250,7 +251,6 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			doc_strs[i] = doc_strs[i].replace("!href!", str(i))
 
 		# determine the display style
-		is_ctrl = self.is_ctrl_pressed() and self.setting("toggle_display_style") and not is_keybinding
 		display_style = "annotation" if (self.setting("display_style") == "annotation") else "popup"
 		if is_ctrl:
 			display_style = "annotation" if (display_style == "popup") else "popup"
