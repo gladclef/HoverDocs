@@ -504,14 +504,28 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			if syntax == None:
 				return None, sublime.Region(0,0), sublime.Region(0,0)
 
-			# create a hidden output panel with the surrounding 10 lines around the symbol
+			# create a hidden output panel
 			sublime.active_window().destroy_output_panel("hd_output_panel")
 			v2 = sublime.active_window().create_output_panel("hd_output_panel", True)
-			start = max(0, sym_loc.row - 10)
-			stop = sym_loc.row + 10
-			pre_line, sym_line, post_line, sym_reg = 0, 0, 0, None
-			with open(sym_loc.path, 'r') as f:
-				lineno = 0
+			large_size = v2.settings()["syntax_detection_size_limit"]
+			if os.path.getsize(sym_loc.path) < large_size:
+				# if the file is small, the load the entire file
+				with open(sym_loc.path, 'r') as f:
+					v2.run_command("hover_docs", args={ "mode": "append", "characters": f.read() })
+					pos = self.get_pos(v2, sym_loc.row, sym_loc.col)
+					sym_reg = sublime.Region(pos, pos+len(sym_name))
+					sym_line = v2.line(pos)
+					pre_line = v2.line(sym_line.a-1)
+					post_line = v2.line(v2.full_line(pos).b+1)
+			else:
+				# If the file is large, then just load the surrounding 100 lines on either side fo the symbol.
+				# TODO load the megabyte surrounding the symbol instead, should be faster and hopefully have
+				# significantly more context.
+				start = max(0, sym_loc.row - 100)
+				stop = sym_loc.row + 100
+				pre_line, sym_line, post_line, sym_reg = 0, 0, 0, None
+				with open(sym_loc.path, 'r') as f:
+					lineno = 0
 				for line in f:
 					lineno += 1
 					if lineno >= start:
