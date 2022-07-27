@@ -37,7 +37,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		1. the view's file
 		2. open files
 		3. files with the same extension as the given view
-		4. "path distance" between the file for the given view and the definition file
+		4. "most common ancestor" between the file for the given view and the definition file
 
 		Args:
 		    view: the active view
@@ -65,9 +65,12 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			if len(defs_samefile) > 0:
 				defs = defs_samefile
 
-			# For sorting by distances between two file paths. The distance for "foobar.txt" between the following example paths is 5:
-			# /this/is/an/example/path/foobar.txt
-			# /this/is/another/path/foobar.txt
+			# For sorting distances to the most common ancestor.
+			# For example, the distance from "foo.txt" to "bar.txt" is 3,
+			# while from "bar.txt" to "foo.txt" the distance is 2.
+			#
+			# /this/is/an/example/path/foo.txt
+			# /this/is/another/path/bar.txt
 			def get_dirs(path):
 				ret = []
 				path, base = os.path.split(path)
@@ -77,29 +80,29 @@ class HoverDocsListener(sublime_plugin.EventListener):
 				ret.reverse()
 				return ret
 			fn_dirs = get_dirs(fn)
-			def get_path_dist(sym_loc):
+			def get_ancestor_dist(sym_loc):
 				sym_dirs = get_dirs(sym_loc.path)
 				for i in range(len(fn_dirs)):
 					if sym_dirs[i] != fn_dirs[i]:
 						break
-				path_dist = len(fn_dirs)-i + len(sym_dirs)-i
-				return path_dist
+				ancestor_dist = len(fn_dirs)-i
+				return ancestor_dist
 
 			# Build a collection of filters to find the most appropriate result.
 			# We filter down until there aren't any sym_locs left, or we've run out of filters.
 			# The order of the filters matters.
 			filter_open    = lambda locs: list(filter(lambda sl: win.find_open_file(sl.path) != None, locs)) # presedence (2)
 			filter_extents = lambda locs: list(filter(lambda sl: sl.path.endswith(ext), locs))               # presedence (3)
-			sort_path_dist = lambda locs: list(sorted(locs, key=get_path_dist))                              # presedence (4)
-			filters = [filter_open, filter_extents, sort_path_dist]
+			sort_ancestor  = lambda locs: list(sorted(locs, key=get_ancestor_dist))                          # presedence (4)
+			filters = [filter_open, filter_extents, sort_ancestor]
 
 			# Find the best fitting sym_loc
 			sym_loc = defs[0]
 			for sym_filter in filters:
-				defs = sym_filter(defs)
-				if len(defs) == 0:
-					break
-				sym_loc = defs[0]
+				defs_new = sym_filter(defs)
+				if len(defs_new) == 0:
+					defs = defs_new
+					sym_loc = defs[0]
 
 			return sym_loc
 		else:
@@ -526,23 +529,23 @@ class HoverDocsListener(sublime_plugin.EventListener):
 				pre_line, sym_line, post_line, sym_reg = 0, 0, 0, None
 				with open(sym_loc.path, 'r') as f:
 					lineno = 0
-				for line in f:
-					lineno += 1
-					if lineno >= start:
-						if lineno == sym_loc.row:
-							sym_line = v2.size()
-							sym_reg = sublime.Region(v2.size()+sym_loc.col-1, v2.size()+sym_loc.col+len(sym_name)-1)
-						elif lineno < sym_loc.row:
-							pre_line = v2.size()
-						v2.run_command("hover_docs", args={ "mode": "append", "characters": line })
-						if lineno == sym_loc.row:
-							post_line = v2.size()
-					if lineno >= stop:
-						break
-				stop = lineno
-			pre_line = v2.line(pre_line)
-			sym_line = v2.line(sym_line)
-			post_line = v2.line(post_line)
+					for line in f:
+						lineno += 1
+						if lineno >= start:
+							if lineno == sym_loc.row:
+								sym_line = v2.size()
+								sym_reg = sublime.Region(v2.size()+sym_loc.col-1, v2.size()+sym_loc.col+len(sym_name)-1)
+							elif lineno < sym_loc.row:
+								pre_line = v2.size()
+							v2.run_command("hover_docs", args={ "mode": "append", "characters": line })
+							if lineno == sym_loc.row:
+								post_line = v2.size()
+						if lineno >= stop:
+							break
+					stop = lineno
+				pre_line = v2.line(pre_line)
+				sym_line = v2.line(sym_line)
+				post_line = v2.line(post_line)
 
 			# set the syntax and let sublime parse the hidden output panel
 			v2.assign_syntax(syntax)
