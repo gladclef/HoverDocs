@@ -354,23 +354,23 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			pos = 0
 			while pos < v2.size():
 				line = v2.line(pos)
-			strval = v2.substr(line)
+				strval = v2.substr(line)
 
-			whitespace, non_whitespace = split_line(strval)
-			linepos, cnt = 0, 0
-			while linepos < len(whitespace):
-				if whitespace[linepos] == "\t":
-					cnt += tab_size
-				else:
-					cnt += 1
-				if cnt > common_whitespace:
-					break
-				linepos += 1
-			linepos =  min(linepos, len(whitespace))
+				whitespace, non_whitespace = split_line(strval)
+				linepos, cnt = 0, 0
+				while linepos < len(whitespace):
+					if whitespace[linepos] == "\t":
+						cnt += tab_size
+					else:
+						cnt += 1
+					if cnt > common_whitespace:
+						break
+					linepos += 1
+				linepos =  min(linepos, len(whitespace))
 
-			whitespace = whitespace[linepos:]
-			comment_str = reduce_string(comment_str, pos, linepos)
-			v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"{line.a}:{line.b}", "characters": whitespace+non_whitespace })
+				whitespace = whitespace[linepos:]
+				comment_str = reduce_string(comment_str, pos, linepos)
+				v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"{line.a}:{line.b}", "characters": whitespace+non_whitespace })
 				pos = v2.full_line(pos).b
 			v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
 
@@ -651,6 +651,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		comment_reg = None
 		for line in [sym_line, pre_line, post_line]:
 			scope_spans = self.get_scope_spans(v2, line)
+			tmp_comment_reg = None
 			for ss in scope_spans:
 				# is this scope span part of a comment
 				found = False
@@ -665,18 +666,27 @@ class HoverDocsListener(sublime_plugin.EventListener):
 				for pnt in [line.a+ss[0], line.a+ss[0]+ss[1]-1]:
 					reg = v2.extract_scope(pnt)
 					if reg != None:
-						if comment_reg == None:
-							comment_reg = reg
+						if tmp_comment_reg == None:
+							tmp_comment_reg = reg
 						else:
-							comment_reg = sublime.Region(min(comment_reg.a, reg.a), max(comment_reg.b, reg.b))
-			if comment_reg != None:
+							tmp_comment_reg = sublime.Region(min(tmp_comment_reg.a, reg.a), max(tmp_comment_reg.b, reg.b))
+
+			# did we find a comment?
+			if tmp_comment_reg != None:
+				if comment_reg == None:
+					comment_reg = tmp_comment_reg
+
 				# include the leading whitespace on the comment string
-				comment_line = v2.line(comment_reg.a)
-				pre_comment_str = v2.substr(sublime.Region(comment_line.a, comment_reg.a))
+				comment_line = v2.line(tmp_comment_reg.a)
+				pre_comment_str = v2.substr(sublime.Region(comment_line.a, tmp_comment_reg.a))
 				if len(pre_comment_str.strip()) == 0:
-					comment_reg = sublime.Region(comment_line.a, comment_reg.b)
-				# comment found, stop looking
-				break
+					tmp_comment_reg = sublime.Region(comment_line.a, tmp_comment_reg.b)
+				
+				# if a block comment found, then it is probably the documentation we seek => stop looking
+				is_docstr, cm_start, cm_mid, cm_end = self.get_comment_is_docstring(v2.substr(tmp_comment_reg), v2)
+				if is_docstr:
+					comment_reg = tmp_comment_reg
+					break
 		if comment_reg == None:
 			comment_reg = sublime.Region(0,0)
 		
@@ -788,4 +798,27 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		index = int(parts[1])
 		sym_loc = sym_locs[index]
 
-		# find the view with the gi
+		# find the view with the given symbol
+		v2 = None
+		for win in sublime.windows():
+			v2 = win.find_open_file(sym_loc.path)
+			if v2 != None:
+				break
+
+		if action == "close":
+			view.erase_regions("hd_hover")
+			view.hide_popup()
+		else: # "goto"
+			open_as_transient = self.setting("open_hyperlink_as_transient")
+			if self.is_ctrl_pressed():
+				open_as_transient = not open_as_transient
+
+			if not open_as_transient:
+				if v2 != None:
+					self.move_to(v2, sym_loc.row, sym_loc.col)
+				else:
+					flags = 1 # encoded position
+					v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
+			else:
+				flags = 1+16+32 # encoded position, semi-transient, add to selection
+				v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
