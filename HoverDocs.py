@@ -100,7 +100,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			sym_loc = defs[0]
 			for sym_filter in filters:
 				defs_new = sym_filter(defs)
-				if len(defs_new) == 0:
+				if len(defs_new) != 0:
 					defs = defs_new
 					sym_loc = defs[0]
 
@@ -309,6 +309,8 @@ class HoverDocsListener(sublime_plugin.EventListener):
 							cs[p] = pos
 				if cs[0] == cs[3]:
 					to_remove.append(cs)
+			for cs in to_remove:
+				new_comment_scopes.remove(cs)
 
 			# now reduce the string
 			if pos == 0:
@@ -320,6 +322,15 @@ class HoverDocsListener(sublime_plugin.EventListener):
 
 		# helpful string functions
 		def split_line(strval, ws_loc="left"):
+			""" Returns the preceeding whitespace, and the following rest of the string.
+
+			Args:
+			    ws_loc: "left" for normal operation, or "right" to instead return the
+			            trailing whitespace and the preceeding rest of the string
+		    Returns:
+		        ws: the preceeding (or trailing) whitespace
+		        nonws: the trailing (or preceeding) rest of the string
+		    """
 			if ws_loc == "left":
 				non_whitespace = strval.lstrip()
 				whitespace = strval[:len(strval) - len(non_whitespace)]
@@ -327,34 +338,22 @@ class HoverDocsListener(sublime_plugin.EventListener):
 				non_whitespace = strval.rstrip()
 				whitespace = strval[len(non_whitespace):]
 			return whitespace, non_whitespace
+		def remove_common_whitespace(comment_str):
+			""" Removes the common leading whitespace from all lines. """
+			# find the length of the common whitespace
+			first_line_parts = split_line(v2.substr(v2.line(0)))
+			common_whitespace = len(first_line_parts[0]) + len(first_line_parts[1])
+			for line in v2.lines(sublime.Region(0, v2.size())):
+				line_str = v2.substr(line)
+				if len(line_str) == 0:
+					continue
+				line_parts = split_line(line_str)
+				common_whitespace = min(common_whitespace, len(line_parts[0]))
 
-		# build a new view into which to insert the comment string
-		sublime.active_window().destroy_output_panel("hd_output_panel")
-		v2 = sublime.active_window().create_output_panel("hd_output_panel", True)
-		v2.assign_syntax(view.syntax())
-		v2.set_scratch(True)
-
-		# insert the comment string
-		v2.run_command("hover_docs", args={ "mode": "append", "characters": comment_str })
-
-		# find the length of the common whitespace
-		tab_size = view.settings().get("tab_size")
-		def replace_tabs(strval):
-			whitespace, non_whitespace = split_line(strval)
-			return whitespace.replace("\t", " "*tab_size), non_whitespace
-		first_line_parts = replace_tabs(v2.substr(v2.line(0)))
-		common_whitespace = len(first_line_parts[0]+first_line_parts[1])
-		for line in v2.lines(sublime.Region(0, v2.size())):
-			line_str = v2.substr(line)
-			if len(line_str) == 0:
-				continue
-			line_parts = replace_tabs(line_str)
-			common_whitespace = min(common_whitespace, len(line_parts[0]))
-
-		# remove to the common whitespace
-		pos = 0
-		while pos < v2.size():
-			line = v2.line(pos)
+			# remove up to the common whitespace
+			pos = 0
+			while pos < v2.size():
+				line = v2.line(pos)
 			strval = v2.substr(line)
 
 			whitespace, non_whitespace = split_line(strval)
@@ -372,23 +371,86 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			whitespace = whitespace[linepos:]
 			comment_str = reduce_string(comment_str, pos, linepos)
 			v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"{line.a}:{line.b}", "characters": whitespace+non_whitespace })
-			pos = v2.full_line(pos).b
-		v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
+				pos = v2.full_line(pos).b
+			v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
 
-		# specifically for python, remove the docstrings
-		is_pydocstr = False
-		if view.syntax().name.lower() == "python":
-			comment_str_rs = comment_str.rstrip()
-			comment_str_ls = comment_str_rs.lstrip()
-			if comment_str_ls.startswith('"""') and comment_str_rs.endswith('"""'):
-				is_pydocstr = True
-				first_line_parts = split_line(v2.substr(v2.line(0)))
-				comment_str = reduce_string(comment_str_rs, len(first_line_parts[0]), 3)
-				comment_str = reduce_string(comment_str, len(comment_str)-3, 3)
+			return comment_str
+		def remove_empty_lines(comment_str):
+			empty_leading = 0
+			for line in v2.lines(sublime.Region(0, v2.size())):
+				line_str = v2.substr(line)
+				if len(line_str.strip()) > 0:
+					empty_leading = line.a
+					break
+			if empty_leading > 0:
+				comment_str = reduce_string(comment_str, 0, empty_leading)
+			empty_trailing_ws = split_line(comment_str, "right")[0]
+			comment_str = reduce_string(comment_str, len(comment_str)-len(empty_trailing_ws), len(empty_trailing_ws))
+			v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
+			return comment_str
+
+		# build a new view into which to insert the comment string
+		sublime.active_window().destroy_output_panel("hd_output_panel")
+		v2 = sublime.active_window().create_output_panel("hd_output_panel", True)
+		if view.syntax() != None:
+			v2.assign_syntax(view.syntax())
+		v2.set_scratch(True)
+
+		# replace all the tabs in the comment string
+		tab_size = view.settings().get("tab_size")
+		tab_size = 4 if tab_size is None else tab_size
+		tab_str = " "*tab_size
+		tab_idx = comment_str.find("\t")
+		while tab_idx >= 0:
+			for cs in new_comment_scopes:
+				for p in [0, 3]:
+					if cs[p] > tab_idx:
+						cs[p] += tab_size-1
+			comment_str = comment_str[:tab_idx] + tab_str + comment_str[tab_idx+1:]
+			tab_idx = comment_str.find("\t")
+
+		# insert the comment string
+		v2.run_command("hover_docs", args={ "mode": "append", "characters": comment_str })
+
+		# remove white space 1
+		comment_str = remove_empty_lines(comment_str)
+		comment_str = remove_common_whitespace(comment_str)
+
+		# remove language-specific multiline docstrings
+		is_docstr, cm_start, cm_mid, cm_end = self.get_comment_is_docstring(comment_str, view)
+		if is_docstr:
+			# example:
+			#     /* this
+			#      * is
+			#      * a comment */
+			# =>
+			#     this
+			#     is
+			#     a comment
+			first_line_parts = split_line(v2.substr(v2.line(0)))
+			last_line_parts  = split_line(v2.substr(v2.line(v2.size())), "right")
+			start_ws = split_line(first_line_parts[1][len(cm_start):])[0]        # eg "/* start of comment" => " "
+			end_ws   = split_line(last_line_parts[1][:-len(cm_end)], "right")[0] # eg "end of comment */" => " "
+			start_ws_len = min(len(start_ws), 1) # don't remove more than one extra space
+			comment_str = reduce_string(comment_str, len(first_line_parts[0]),                 len(cm_start)+start_ws_len)
+			comment_str = reduce_string(comment_str, len(comment_str)-len(cm_end)-len(end_ws), len(cm_end)+len(end_ws))
+			v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
+			if cm_mid != "":
+				# deal with middle-line comment markings, for example "* i'm a c comment"
+				pos = v2.size()
+				while pos > 0:
+					line = v2.line(pos)
+					line_str = v2.substr(line)
+					line_ws, line_nonws = split_line(line_str)
+					if line_nonws.startswith(cm_mid):
+						mid_ws = split_line(line_nonws[len(cm_mid):])[0]
+						mid_ws_len = min(len(mid_ws), 1) # don't remove more than one extra space
+						comment_str = reduce_string(comment_str, line.a, len(line_ws)+len(cm_mid)+mid_ws_len)
+					pos = line.a-1
 				v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
 
-		# remove the comment markings from the comment string
-		if not is_pydocstr:
+		# remove the per-line comment markings from the comment string
+		if not is_docstr:
 			pos = 0
 			while pos < v2.size():
 				line = v2.line(pos)
@@ -412,18 +474,11 @@ class HoverDocsListener(sublime_plugin.EventListener):
 
 				# move on to the next line
 				pos = v2.full_line(pos).b+1
-		v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
+			v2.run_command("hover_docs", args={ "mode": "replace", "reg_str": f"0:{v2.size()}", "characters": comment_str })
 
-		# remove empty leading and trailing lines
-		empty_leading = 0
-		for line in v2.lines(sublime.Region(0, v2.size())):
-			line_str = v2.substr(line)
-			if len(line_str.strip()) > 0:
-				empty_leading = line.a
-				break
-		if empty_leading > 0:
-			comment_str = reduce_string(comment_str, 0, empty_leading)
-		comment_str = comment_str.rstrip()
+		# remove white space 2
+		comment_str = remove_empty_lines(comment_str)
+		comment_str = remove_common_whitespace(comment_str)
 
 		# update the "lengths" of the comment_scopes
 		for cs in new_comment_scopes:
@@ -431,6 +486,31 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			del cs[3]
 
 		return comment_str, new_comment_scopes
+
+	def get_comment_is_docstring(self, comment_str, view):
+		""" Determine if the comment string is a doc string, and
+		return the doc string markings for said comment.
+
+		Args:
+			comment_str: the comment string to inspect
+			view: the view that the comment is located in (necessary to get the view's syntax name)
+		Returns:
+			is_docstr: True if the comment is a docstring, False otherwise
+			cm_start: The opening docstring marking
+			cm_mid: The per-line docstring marking (could be empty string)
+			cm_end: The closing docstring marking
+		"""
+		multi_line_docstrings = self.setting("multi_line_docstrings")
+		syntax_name = "" if view.syntax() is None else view.syntax().name.lower()
+		if syntax_name in multi_line_docstrings:
+			comment_str_rs = comment_str.rstrip()
+			comment_str_ls = comment_str_rs.lstrip()
+			for comment_markings in multi_line_docstrings[syntax_name]:
+				cm_start, cm_end = comment_markings[0], comment_markings[1]
+				cm_mid = "" if len(comment_markings) < 3 else comment_markings[2]
+				if comment_str_ls.startswith(cm_start) and comment_str_rs.endswith(cm_end):
+					return True, cm_start, cm_mid, cm_end
+		return False, "", "", ""
 
 	def apply_syntax(self, view, strval, scope_spans):
 		""" Inserts minihtml into the given string to match the syntax of the given spans.
@@ -706,27 +786,4 @@ class HoverDocsListener(sublime_plugin.EventListener):
 		index = int(parts[1])
 		sym_loc = sym_locs[index]
 
-		# find the view with the given symbol
-		v2 = None
-		for win in sublime.windows():
-			v2 = win.find_open_file(sym_loc.path)
-			if v2 != None:
-				break
-
-		if action == "close":
-			view.erase_regions("hd_hover")
-			view.hide_popup()
-		else: # "goto"
-			open_as_transient = self.setting("open_hyperlink_as_transient")
-			if self.is_ctrl_pressed():
-				open_as_transient = not open_as_transient
-
-			if not open_as_transient:
-				if v2 != None:
-					self.move_to(v2, sym_loc.row, sym_loc.col)
-				else:
-					flags = 1 # encoded position
-					v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
-			else:
-				flags = 1+16+32 # encoded position, semi-transient, add to selection
-				v2 = sublime.active_window().open_file(f"{sym_loc.path}:{sym_loc.row}:{sym_loc.col}", flags=flags)
+		# find the view with the gi

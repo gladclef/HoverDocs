@@ -32,4 +32,26 @@
 	"display_file_hyperlink": true,
 	// Open files as transients instead of switching views.
 	"open_hyperlink_as_transient": false,
+
+	// Language-specific start and end (and middle) multi-line comment markers
+	// (note that single-line comments don't need special logic)
+	"multi_line_docstrings": {
+		"c":           [["/*", "*/", "*"]],
+		"c++":         [["/*", "*/", "*"]],
+		"css":         [["/*", "*/", "*"]],
+		"c#":          [["/*", "*/", "*"]],
+		"html":        [["<!--", "-->"]],
+		"go":          [["/*", "*/", "*"]],
+		"java":        [["/*", "*/", "*"]],
+		"javascript":  [["/*", "*/", "*"]],
+		"kotlin":      [["/*", "*/", "*"]],
+		"matlab":      [["%{", "%}"]],
+		"objective-c": [["/*", "*/", "*"]],
+		"php":         [["/*", "*/", "*"]],
+		"python":      [["\"\"\"", "\"\"\""], ["'''", "'''"]],
+		"rust":        [["/**", "*/", "*"], ["/*", "*/", "*"], ["///", ""]],
+		// these languages aren't handled property yet
+		// "perl":     [["=", "=cut"]],
+		// "ruby":     [["=begin", "=end"]],
+	}
 }
