@@ -541,15 +541,17 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			style = view.style_for_scope(scope_names[0])
 			for scope_name in scope_names[1:]:
 				tmp_style = view.style_for_scope(scope_name)
-				if style['foreground'] == default_style['foreground']:
+				if 'foreground' in default_style and style['foreground'] == default_style['foreground']:
 					style = tmp_style
-				if tmp_style['foreground'] != default_style['foreground']:
+				if 'foreground' in default_style and tmp_style['foreground'] != default_style['foreground']:
 					style = tmp_style
 
 			# apply the syntax for this piece
-			style_str = f"<div style='display:inline; color:{style['foreground']};"
+			style_str = f"<div style='display:inline;"
+			if "foreground" in style:
+				style_str += f" color:{style['foreground']};"
 			if "background" in style:
-				style_str += " background-color:{style['background']};"
+				style_str += f" background-color:{style['background']};"
 			if "bold" in style and style["bold"]:
 				style_str += " font-weight:bold;"
 			if "italic" in style and style["italic"]:
