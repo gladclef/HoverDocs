@@ -30,30 +30,32 @@ class HoverDocsListener(sublime_plugin.EventListener):
 	def setting(self, setting):
 		return sublime.load_settings("HoverDocs.sublime-settings")[setting]
 
-	def find_symbol_definition(self, view, sym_name):
-		""" Searches the sublime index of symbols for the closest matching definition of sym_name.
+	def find_symbol_definition(self, ref_view, ref_name):
+		""" Searches the sublime index of symbols for the closest matching definition of ref_name.
 
 		The "closest match" is according to the following rules, in order of presedence:
-		1. the view's file
+		1. the ref_view's file
 		2. open files
-		3. files with the same extension as the given view
-		4. "most common ancestor" between the file for the given view and the definition file
+		3. files with the same syntax as the given ref_view
+		4. files with the same extension as the given ref_view
+		5. "most common ancestor" between the file for the given ref_view and the definition file
 
 		Args:
-		    view: the active view
-		    sym_name: the name of the symbol to look for
-	    
-	    Returns:
-			The SymbolLocation, or None if not found.
+		    ref_view: the view that the symbol reference is found in
+		    ref_name: the name of the symbol to look for
+
+		Returns:
+			The definition SymbolLocation, or None if not found.
 			https://www.sublimetext.com/docs/api_reference.html#sublime.SymbolLocation
 		"""
 		win = sublime.active_window()
-		sym_locs = win.symbol_locations(sym=sym_name)
+		sym_locs = win.symbol_locations(sym=ref_name)
 		if len(sym_locs) > 0:
 			_subl_definition_type = 1
 			sym_loc = None
-			fn = view.file_name()
-			a, ext = os.path.splitext(fn)
+			ref_fn, ref_ext = ref_view.file_name(), None
+			if ref_fn != None:
+				a, ref_ext = os.path.splitext(ref_fn)
 
 			# find the best fitting definition
 			defs = list(filter(lambda sl: sl.type == _subl_definition_type, sym_locs))
@@ -61,9 +63,35 @@ class HoverDocsListener(sublime_plugin.EventListener):
 				return None
 
 			# presedence (1)
-			defs_samefile = list(filter(lambda sl: sl.path == fn, defs))
+			defs_samefile = list(filter(lambda sl: sl.path == ref_fn, defs))
 			if len(defs_samefile) > 0:
 				defs = defs_samefile
+
+			# For getting a file's syntax
+			def get_view_syntax(fn):
+				if fn == None:
+					return None
+				for win2 in sublime.windows():
+					v2 = win2.find_open_file(fn)
+					if v2 != None:
+						break
+				if v2 is None:
+					syntax = sublime.syntax_from_path(fn)
+				else:
+					syntax = v2.syntax()
+				if syntax is None:
+					return None
+				return syntax.name.lower()
+			key_syntax = get_view_syntax(ref_fn)
+			def syntax_match(sym_path):
+				if key_syntax == None:
+					return True
+				syntax = get_view_syntax(sym_path)
+				if syntax == None:
+					return True
+				if syntax in key_syntax or key_syntax in syntax:
+					return True
+				return False
 
 			# For sorting distances to the most common ancestor.
 			# For example, the distance from "foo.txt" to "bar.txt" is 3,
@@ -72,6 +100,9 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			# /this/is/an/example/path/foo.txt
 			# /this/is/another/path/bar.txt
 			def get_dirs(path):
+				print(path)
+				if path == None or re.match(r"^<untitled \d+>$", path) != None:
+					return None
 				ret = []
 				path, base = os.path.split(path)
 				while base != "":
@@ -79,22 +110,26 @@ class HoverDocsListener(sublime_plugin.EventListener):
 					ret.append(base)
 				ret.reverse()
 				return ret
-			fn_dirs = get_dirs(fn)
+			ref_dirs = get_dirs(ref_fn)
 			def get_ancestor_dist(sym_loc):
 				sym_dirs = get_dirs(sym_loc.path)
-				for i in range(len(fn_dirs)):
-					if sym_dirs[i] != fn_dirs[i]:
+				if ref_dirs == None or sym_dirs == None:
+					return 0
+				for i in range(len(ref_dirs)):
+					if sym_dirs[i] != ref_dirs[i]:
 						break
-				ancestor_dist = len(fn_dirs)-i
+				ancestor_dist = len(ref_dirs)-i
 				return ancestor_dist
 
 			# Build a collection of filters to find the most appropriate result.
 			# We filter down until there aren't any sym_locs left, or we've run out of filters.
 			# The order of the filters matters.
-			filter_open    = lambda locs: list(filter(lambda sl: win.find_open_file(sl.path) != None, locs)) # presedence (2)
-			filter_extents = lambda locs: list(filter(lambda sl: sl.path.endswith(ext), locs))               # presedence (3)
-			sort_ancestor  = lambda locs: list(sorted(locs, key=get_ancestor_dist))                          # presedence (4)
-			filters = [filter_open, filter_extents, sort_ancestor]
+			pathless       = lambda sl: not hasattr(sl,'path')
+			filter_open    = lambda locs: list(filter(lambda sl: pathless(sl) or win.find_open_file(sl.path) != None, locs))          # presedence (2)
+			filter_syntax  = lambda locs: list(filter(lambda sl: pathless(sl) or syntax_match(sl.path), locs))                        # presedence (3)
+			filter_extents = lambda locs: list(filter(lambda sl: pathless(sl) or ref_ext == None or sl.path.endswith(ref_ext), locs)) # presedence (4)
+			sort_ancestor  = lambda locs: list(sorted(locs, key=get_ancestor_dist))                                                   # presedence (5)
+			filters = [filter_open, filter_syntax, filter_extents, sort_ancestor]
 
 			# Find the best fitting sym_loc
 			sym_loc = defs[0]
