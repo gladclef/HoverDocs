@@ -146,7 +146,9 @@ class HoverDocsListener(sublime_plugin.EventListener):
 
 	def on_text_command(self, view, command_name, args):
 		if command_name == "hover_docs":
-			if (args == None) or (not "mode" in args):
+			if args == None:
+				args = {}
+			if not "mode" in args:
 				args["mode"] = "open"
 			if  args["mode"] == "open":
 				doc_regs, doc_strs, sym_locs = [], [], []
