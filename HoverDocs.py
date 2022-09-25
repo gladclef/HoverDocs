@@ -632,7 +632,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			large_size = v2.settings()["syntax_detection_size_limit"]
 			if os.path.getsize(sym_loc.path) < large_size:
 				# if the file is small, the load the entire file
-				with open(sym_loc.path, 'r') as f:
+				with open(sym_loc.path, 'r', encoding="utf-8") as f:
 					v2.run_command("hover_docs", args={ "mode": "append", "characters": f.read() })
 					pos = self.get_pos(v2, sym_loc.row, sym_loc.col)
 					sym_reg = sublime.Region(pos, pos+len(sym_name))
