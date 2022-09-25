@@ -270,7 +270,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			if len(comment_str) > 0:
 				doc_str += ("" if len(doc_str) == 0 else "<br>") + comment_str
 		if (self.setting("display_file_hyperlink") or force_hyperlink == True) and (force_hyperlink != False):
-			doc_str += ("" if len(doc_str) == 0 else "<br>") + f"<a href='goto:!href!'>{fn}:{sym_loc.row+1}</a>"
+			doc_str += ("" if len(doc_str) == 0 else "<br>") + f"<a href='goto:!href!'>{fn}:{sym_loc.row}</a>"
 
 		return doc_str, sym_loc, sym_reg
 
