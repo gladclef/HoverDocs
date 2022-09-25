@@ -99,27 +99,15 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			#
 			# /this/is/an/example/path/foo.txt
 			# /this/is/another/path/bar.txt
-			def get_dirs(path):
-				print(path)
-				if path == None or re.match(r"^<untitled \d+>$", path) != None:
-					return None
-				ret = []
-				path, base = os.path.split(path)
-				while base != "":
-					path, base = os.path.split(path)
-					ret.append(base)
-				ret.reverse()
-				return ret
-			ref_dirs = get_dirs(ref_fn)
 			def get_ancestor_dist(sym_loc):
-				sym_dirs = get_dirs(sym_loc.path)
-				if ref_dirs == None or sym_dirs == None:
+				if not ref_fn:
 					return 0
-				for i in range(len(ref_dirs)):
-					if sym_dirs[i] != ref_dirs[i]:
-						break
-				ancestor_dist = len(ref_dirs)-i
-				return ancestor_dist
+				if ref_fn[0] != sym_loc.path[0]:
+					return 0
+				return (
+					ref_fn.count(os.sep)
+					- os.path.commonpath([sym_loc.path, ref_fn]).count(os.sep)
+				)
 
 			# Build a collection of filters to find the most appropriate result.
 			# We filter down until there aren't any sym_locs left, or we've run out of filters.
@@ -270,7 +258,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			if len(comment_str) > 0:
 				doc_str += ("" if len(doc_str) == 0 else "<br>") + comment_str
 		if (self.setting("display_file_hyperlink") or force_hyperlink == True) and (force_hyperlink != False):
-			doc_str += ("" if len(doc_str) == 0 else "<br>") + f"<a href='goto:!href!'>{fn}:{sym_loc.row+1}</a>"
+			doc_str += ("" if len(doc_str) == 0 else "<br>") + f"<a href='goto:!href!'>{fn}:{sym_loc.row}</a>"
 
 		return doc_str, sym_loc, sym_reg
 
@@ -632,7 +620,7 @@ class HoverDocsListener(sublime_plugin.EventListener):
 			large_size = v2.settings()["syntax_detection_size_limit"]
 			if os.path.getsize(sym_loc.path) < large_size:
 				# if the file is small, the load the entire file
-				with open(sym_loc.path, 'r') as f:
+				with open(sym_loc.path, 'r', encoding="utf-8") as f:
 					v2.run_command("hover_docs", args={ "mode": "append", "characters": f.read() })
 					pos = self.get_pos(v2, sym_loc.row, sym_loc.col)
 					sym_reg = sublime.Region(pos, pos+len(sym_name))
